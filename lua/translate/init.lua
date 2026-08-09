@@ -77,6 +77,7 @@ local function start(win, buf, source)
     provider = engine.provider.name,
     model = engine.provider.model,
     max_height = cfg.float.max_height,
+    max_width = cfg.float.max_width,
     keymaps = cfg.float.keymaps,
     on_close = function()
       state.float = nil

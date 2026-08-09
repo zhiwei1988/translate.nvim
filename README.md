@@ -88,6 +88,9 @@ require('translate').setup({
   -- 悬浮译文窗
   float = {
     max_height = 0.5,           -- 小数 = 编辑器高度的比例；整数 = 绝对行数
+    max_width  = 0.6,           -- 小数 = 源窗口宽度的比例；整数 = 绝对列数
+                                -- 正文写满窗口时，"宽度跟随段落"就等于占满
+                                -- 窗口，所以默认收窄；设为 false 即不设上限
     keymaps = {                 -- 在【源 buffer】上临时生效，浮窗从不接受焦点
       scroll_down = '<C-d>',    -- 设为 false 即禁用
       scroll_up   = '<C-u>',

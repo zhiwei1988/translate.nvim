@@ -58,6 +58,12 @@ local function footer_text()
   end, chunks))
 end
 
+--- Columns a float anchored at the paragraph's first text column can occupy:
+--- the window, minus its gutter, minus the border.
+local function room_in(win)
+  return vim.api.nvim_win_get_width(win) - vim.fn.getwininfo(win)[1].textoff - 2
+end
+
 local function topline()
   return vim.api.nvim_win_call(inst.win, function()
     return vim.fn.line('w0')
@@ -68,6 +74,8 @@ describe('float', function()
   before_each(function()
     saved = { lines = vim.o.lines, columns = vim.o.columns }
     vim.o.lines, vim.o.columns = 40, 100
+    -- Splits a test opened must not leak into the next one.
+    vim.cmd('silent! only')
 
     src_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(src_buf, 0, -1, false, paragraph_lines(30))
@@ -136,10 +144,102 @@ describe('float', function()
       eq(config().width, 20)
     end)
 
-    it('never goes wider than the editor minus a margin', function()
+    it('never goes wider than the source window can hold', function()
       vim.api.nvim_buf_set_lines(src_buf, 0, -1, false, { string.rep('y', 300), 'b' })
+      open({ range = { 0, 1 }, max_width = false })
+      eq(config().width, room_in(src_win))
+    end)
+
+    -- Regression: the cap used to be measured against the *editor*, so in a
+    -- split the float came out wider than the window it is anchored to and
+    -- Neovim shoved it sideways over whatever sat next to it.
+    it('stays inside the source window when it is not the only window', function()
+      vim.cmd('vsplit')
+      vim.cmd('wincmd l')
+      src_win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(src_win, src_buf)
+      vim.api.nvim_buf_set_lines(src_buf, 0, -1, false, { string.rep('y', 300), 'b' })
+      vim.cmd('redraw')
+
+      neq(vim.api.nvim_win_get_width(src_win), vim.o.columns)
+      open({ range = { 0, 1 }, max_width = false })
+      eq(config().width, room_in(src_win))
+    end)
+
+    -- Regression: `bufpos` resolves to a buffer line's *first* screen row, so a
+    -- paragraph long enough to soft-wrap had the float land on top of the very
+    -- source text it was translating.
+    it('steps over every screen row a wrapped paragraph line occupies', function()
+      vim.api.nvim_buf_set_lines(src_buf, 0, -1, false, { string.rep('z', 250), 'tail' })
+      vim.wo[src_win].wrap = true
+      vim.cmd('redraw')
+
+      local wrapped = vim.api.nvim_win_text_height(src_win, { start_row = 0, end_row = 0 }).all
+      eq(wrapped, 3) -- 250 columns of text over a 100-column window
+
+      open({ range = { 0, 0 } })
+      local c = config()
+      eq(c.bufpos, { 0, 0 })
+      eq(c.row, wrapped)
+    end)
+
+    it('still sits one row down when the paragraph does not wrap', function()
+      vim.wo[src_win].wrap = true
       open({ range = { 0, 1 } })
-      eq(config().width, vim.o.columns - 8)
+      eq(config().row, 1)
+    end)
+  end)
+
+  -- A paragraph that soft-wraps is as wide as its window, so "width follows the
+  -- paragraph" would otherwise yield a full-window float — a wide column to read
+  -- a translation in. Hence a cap that is on by default.
+  describe('max_width (§7.1)', function()
+    local function wide_paragraph()
+      vim.api.nvim_buf_set_lines(src_buf, 0, -1, false, { string.rep('y', 300), 'b' })
+    end
+
+    it('defaults to six tenths of the source window', function()
+      wide_paragraph()
+      open({ range = { 0, 1 } })
+      eq(config().width, math.floor(room_in(src_win) * 0.6))
+    end)
+
+    it('lets false turn the cap off entirely', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = false })
+      eq(config().width, room_in(src_win))
+    end)
+
+    it('reads a fraction as a proportion of the source window', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = 0.6 })
+      eq(config().width, math.floor(room_in(src_win) * 0.6))
+    end)
+
+    it('reads an integer as an absolute column count', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = 40 })
+      eq(config().width, 40)
+    end)
+
+    it('caps without ever widening a paragraph narrower than the cap', function()
+      vim.api.nvim_buf_set_lines(src_buf, 0, -1, false, { string.rep('y', 30), 'b' })
+      open({ range = { 0, 1 }, max_width = 80 })
+      eq(config().width, 30)
+    end)
+
+    -- An explicit cap is an instruction, so it outranks the 20-column floor that
+    -- only exists to keep unattended floats readable.
+    it('is honoured below the minimum width', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = 12 })
+      eq(config().width, 12)
+    end)
+
+    it('never lets the cap push the float past the source window', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = 500 })
+      eq(config().width, room_in(src_win))
     end)
   end)
 

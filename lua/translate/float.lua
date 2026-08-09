@@ -14,8 +14,8 @@ local SPINNER = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇',
 local SPINNER_INTERVAL = 100
 
 local MIN_WIDTH = 20
-local WIDTH_MARGIN = 8
 local BORDER_ROWS = 2
+local BORDER_COLS = 2
 
 function M.namespace()
   return NS
@@ -49,25 +49,78 @@ end
 local Float = {}
 Float.__index = Float
 
+--- Screen rows a run of buffer lines occupies in `win`, soft-wrapped rows
+--- included. A buffer line is not a screen line, and every placement decision
+--- here is about screen lines.
+---
+--- Guarded because this runs on every spinner tick: the window can go away, and
+--- the buffer can be edited out from under the range, while a redraw is already
+--- queued. One row is what an unwrapped line would have cost.
+local function screen_rows(win, first, last)
+  local ok, height = pcall(vim.api.nvim_win_text_height, win, { start_row = first, end_row = last })
+  return ok and height.all or 1
+end
+
+--- Columns the float can occupy. It is anchored at the paragraph's first text
+--- column, so the room is what the *source window* has left of its own right
+--- edge — not what the editor has. Getting this wrong makes Neovim shove the
+--- window sideways over whatever sits next to it.
+local function room_for(win)
+  local info = vim.fn.getwininfo(win)[1]
+  if info == nil then
+    return math.max(1, vim.o.columns - BORDER_COLS)
+  end
+  return math.max(1, info.width - info.textoff - BORDER_COLS)
+end
+
+--- Fractions are of the *source window*, not the editor: the float is bounded by
+--- the window its paragraph lives in, and that is the frame the reader is
+--- comparing it against. (`max_height` counts against the editor because a
+--- float can be as tall as the screen allows regardless of its window.)
+local function resolve_max_width(max_width, room)
+  if max_width > 0 and max_width < 1 then
+    return math.max(1, math.floor(room * max_width))
+  end
+  return math.max(1, math.floor(max_width))
+end
+
 --- Width follows the paragraph, so the translation sits in a column the reader's
---- eye is already scanning.
-local function paragraph_width(buf, range)
+--- eye is already scanning. "The paragraph" means the paragraph *as rendered*: a
+--- long line that soft-wraps is as wide as the window it wraps in, never as wide
+--- as its raw length.
+---
+--- Which is why `max_width` is capped by default: prose written to the full
+--- window width makes "follow the paragraph" mean "fill the window", and that is
+--- a wide column to read a translation in. `false` turns the cap off.
+local function paragraph_width(buf, win, range, max_width)
   local width = 0
   for _, line in ipairs(vim.api.nvim_buf_get_lines(buf, range[1], range[2] + 1, false)) do
     width = math.max(width, vim.fn.strdisplaywidth(line))
   end
-  return math.max(MIN_WIDTH, math.min(width, vim.o.columns - WIDTH_MARGIN))
+
+  local room = room_for(win)
+  local fit = math.min(math.max(MIN_WIDTH, width), room)
+  if max_width then
+    -- The cap outranks MIN_WIDTH, which only exists to stop a *short* paragraph
+    -- from getting a sliver of a window — not to argue with a stated width.
+    fit = math.min(fit, resolve_max_width(max_width, room))
+  end
+  return math.max(1, fit)
 end
 
 --- Rows available under / over the paragraph, border included.
 local function available(win, range)
-  local below_of = vim.fn.screenpos(win, range[2] + 1, 1).row
-  local above_of = vim.fn.screenpos(win, range[1] + 1, 1).row
+  local head_of = vim.fn.screenpos(win, range[1] + 1, 1).row
+  local tail_of = vim.fn.screenpos(win, range[2] + 1, 1).row
   local bottom = vim.o.lines - vim.o.cmdheight - 1
 
+  -- `screenpos` answers with the *first* screen row of a buffer line; the space
+  -- below the paragraph starts after that line's last wrapped row.
+  local last = tail_of > 0 and (tail_of + screen_rows(win, range[2], range[2]) - 1) or 0
+
   return {
-    below = below_of > 0 and (bottom - below_of - BORDER_ROWS) or 0,
-    above = above_of > 0 and (above_of - 1 - BORDER_ROWS) or 0,
+    below = last > 0 and (bottom - last - BORDER_ROWS) or 0,
+    above = head_of > 0 and (head_of - 1 - BORDER_ROWS) or 0,
   }
 end
 
@@ -82,11 +135,16 @@ function Float:_geometry()
   local below = space.below >= capped or space.below >= space.above
   local room = below and space.below or space.above
 
+  -- `bufpos` resolves to the *first* screen row of that buffer line, so clearing
+  -- the paragraph means stepping over every row the last line wraps into —
+  -- otherwise the float lands on top of the source it is translating.
+  local tail = screen_rows(self.src_win, self.range[2], self.range[2])
+
   return {
     height = math.max(1, math.min(capped, math.max(room, 1))),
     anchor = below and 'NW' or 'SW',
     bufpos = below and { self.range[2], 0 } or { self.range[1], 0 },
-    row = below and 1 or 0,
+    row = below and tail or 0,
   }
 end
 
@@ -409,7 +467,7 @@ function Float:close()
   end
 end
 
---- @param opts table win, buf, range, provider, model, max_height, keymaps, on_close
+--- @param opts table win, buf, range, provider, model, max_height, max_width, keymaps, on_close
 function M.open(opts)
   define_highlights()
 
@@ -420,6 +478,9 @@ function M.open(opts)
     provider = opts.provider,
     model = opts.model,
     max_height = opts.max_height or 0.5,
+    -- `false` is meaningful — no cap, width follows the paragraph — so an
+    -- absent option cannot be spelled `or`.
+    max_width = opts.max_width == nil and 0.6 or opts.max_width,
     keymaps = opts.keymaps or {},
     on_close = opts.on_close,
 
@@ -437,7 +498,7 @@ function M.open(opts)
     closed = false,
   }, Float)
 
-  self.width = paragraph_width(self.src_buf, self.range)
+  self.width = paragraph_width(self.src_buf, self.src_win, self.range, self.max_width)
   self.buf = vim.api.nvim_create_buf(false, true)
   vim.bo[self.buf].bufhidden = 'wipe'
   -- Not for the plugin's benefit — it maps nothing here — but so users can hang

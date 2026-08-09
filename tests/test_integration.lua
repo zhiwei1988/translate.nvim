@@ -107,6 +107,21 @@ describe('translate.nvim end to end', function()
     eq(vim.api.nvim_get_current_win(), win)
   end)
 
+  -- The unit tests hand float.open() its options directly, so only this seam
+  -- catches setup() dropping one on the way through.
+  it('carries float.max_width from setup() through to the window', function()
+    setup({ float = { max_width = 30 } })
+    respond('你好，世界。')
+    open_markdown('# Title\n\n' .. string.rep('Hello world. ', 20) .. '\n')
+    vim.api.nvim_win_set_cursor(win, { 3, 0 })
+
+    translate.translate()
+    eq(wait_for(function()
+      return float_text() == '你好，世界。'
+    end), true)
+    eq(vim.api.nvim_win_get_config(translate._float().win).width, 30)
+  end)
+
   it('serves the second request for the same paragraph from the cache', function()
     setup()
     respond('你好，世界。')

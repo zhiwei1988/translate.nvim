@@ -28,6 +28,9 @@ local function defaults()
     -- Translation float
     float = {
       max_height = 0.5,
+      -- Prose that fills the window would otherwise make "width follows the
+      -- paragraph" mean "fills the window". `false` turns the cap off.
+      max_width = 0.6,
       keymaps = {
         scroll_down = '<C-d>',
         scroll_up = '<C-u>',
