@@ -1,0 +1,59 @@
+#!/bin/sh
+# A stand-in for curl, so the adapter can be driven over a real vim.system()
+# pipe with exact control over frame boundaries, delays, HTTP status and error
+# bodies (spec §8).
+#
+# Env:
+#   TRANSLATE_FAKE_CURL_SCRIPT  scenario file (required), one directive per line:
+#                                 emit <text>    printf %b to stdout
+#                                 sleep <secs>
+#                                 status <code>  emulates the labelled -w write-out
+#                                 exitcode <n>
+#   TRANSLATE_FAKE_CURL_ARGV    dump argv here, one argument per line
+#   TRANSLATE_FAKE_CURL_STDIN   dump the request body here
+#   TRANSLATE_FAKE_CURL_CONFIG  dump the contents of the --config file here
+
+if [ -n "$TRANSLATE_FAKE_CURL_ARGV" ]; then
+  : >"$TRANSLATE_FAKE_CURL_ARGV"
+  for a in "$@"; do
+    printf '%s\n' "$a" >>"$TRANSLATE_FAKE_CURL_ARGV"
+  done
+fi
+
+config_path=''
+prev=''
+for a in "$@"; do
+  [ "$prev" = "--config" ] && config_path="$a"
+  prev="$a"
+done
+if [ -n "$TRANSLATE_FAKE_CURL_CONFIG" ] && [ -n "$config_path" ] && [ -f "$config_path" ]; then
+  cat "$config_path" >"$TRANSLATE_FAKE_CURL_CONFIG"
+fi
+
+# Always drain stdin, otherwise the writer gets SIGPIPE.
+if [ -n "$TRANSLATE_FAKE_CURL_STDIN" ]; then
+  cat >"$TRANSLATE_FAKE_CURL_STDIN"
+else
+  cat >/dev/null
+fi
+
+# No scenario (e.g. a `--version` probe): behave like a well-behaved binary.
+if [ -z "$TRANSLATE_FAKE_CURL_SCRIPT" ] || [ ! -f "$TRANSLATE_FAKE_CURL_SCRIPT" ]; then
+  printf 'curl 8.5.0 (fake)\n'
+  exit 0
+fi
+
+code=0
+while IFS= read -r line || [ -n "$line" ]; do
+  op=${line%% *}
+  arg=${line#* }
+  case "$op" in
+    emit) printf '%b' "$arg" ;;
+    sleep) sleep "$arg" ;;
+    status) printf '\ntranslate-http-status:%s\n' "$arg" >&2 ;;
+    exitcode) code="$arg" ;;
+    *) ;;
+  esac
+done <"$TRANSLATE_FAKE_CURL_SCRIPT"
+
+exit "$code"

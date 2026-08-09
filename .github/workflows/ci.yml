@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The lowest version the plugin claims to support, and the one that
+        # breaks first.
+        neovim: [v0.10.0, nightly]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim }}
+
+      - name: Install the markdown treesitter parser
+        run: |
+          mkdir -p ~/.local/share/nvim/site/pack/ts/start
+          git clone --depth 1 https://github.com/nvim-treesitter/nvim-treesitter \
+            ~/.local/share/nvim/site/pack/ts/start/nvim-treesitter
+          nvim --headless -c 'TSInstallSync markdown markdown_inline' -c 'q'
+
+      - run: make test
