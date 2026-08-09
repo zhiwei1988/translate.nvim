@@ -63,6 +63,12 @@ describe('prompt.fingerprint', function()
   it('is short enough to sit inside a cache key', function()
     eq(#prompt.fingerprint('anything') <= 32, true)
   end)
+
+  -- extra_instructions is arbitrary user configuration, so the rendered prompt
+  -- is not guaranteed to be text. See translate.hash for why that matters.
+  it('fingerprints a rendered prompt that carries a NUL', function()
+    eq(prompt.fingerprint('a\0b'):match('^%x+$') ~= nil, true)
+  end)
 end)
 
 describe('prompt.user_message', function()

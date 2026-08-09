@@ -6,6 +6,8 @@
 --- component — the whole cache would be dead (CONTEXT.md: Prompt 指纹).
 local M = {}
 
+local hash = require('translate.hash')
+
 --- Written in English on purpose: the same instruction set costs 30–50% more
 --- tokens in Chinese and ships on every request, and negative constraints are
 --- followed noticeably more reliably in English (spec §4.1).
@@ -61,7 +63,7 @@ end
 --- extra_instructions, or to the target language shows up here automatically —
 --- no hand-maintained version number to forget to bump (spec §6.1).
 function M.fingerprint(system)
-  return vim.fn.sha256(system):sub(1, 16)
+  return hash.digest(system):sub(1, 16)
 end
 
 --- The paragraph goes out untouched; the delimiters are the only framing.
