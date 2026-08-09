@@ -43,6 +43,15 @@ local function join(...)
   return table.concat(parts, '\0')
 end
 
+--- The joined material is binary — it carries NUL separators, and a field may
+--- carry one of its own. A Lua string holding a NUL crosses into Vimscript as a
+--- Blob rather than a String, and sha256() rejects a Blob with E976 on Neovim
+--- 0.10, the oldest version this plugin supports. Hex encoding is injective, so
+--- hashing the encoding hashes the same identity.
+local function digest(material)
+  return vim.fn.sha256(vim.text.hexencode(material))
+end
+
 --- Cache key for one paragraph under the effective configuration.
 ---
 --- Sampling parameters are deliberately not part of it: they do not change what
@@ -58,7 +67,7 @@ end
 --- cost is a missed hit when the very same bytes appear as two different block
 --- types, which is the cheaper mistake.
 function M.key(opts)
-  return vim.fn.sha256(join(
+  return digest(join(
     M.key_source(opts.text, opts.block_type),
     opts.block_type,
     opts.target_lang,

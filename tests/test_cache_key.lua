@@ -103,3 +103,17 @@ describe('cache.key — shape', function()
     eq(#key() >= 32, true)
   end)
 end)
+
+-- A Lua string carrying a NUL crosses into Vimscript as a Blob rather than a
+-- String, and sha256() on Neovim 0.10 — the oldest version this plugin claims
+-- to support — rejects a Blob with E976. Any field can carry one, so the key
+-- material is hex-encoded on its way to the digest.
+describe('cache.key — a NUL byte in any field', function()
+  it('still keys a paragraph whose text carries one', function()
+    eq(key({ text = 'a\0b' }):match('^%x+$') ~= nil, true)
+  end)
+
+  it('still keys a configuration component that carries one', function()
+    eq(key({ model = 'a\0b' }):match('^%x+$') ~= nil, true)
+  end)
+end)
