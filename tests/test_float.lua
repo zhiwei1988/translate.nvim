@@ -241,6 +241,20 @@ describe('float', function()
       open({ range = { 0, 1 }, max_width = 500 })
       eq(config().width, room_in(src_win))
     end)
+
+    -- LuaJIT cannot tell 1.0 from 1, so reading 1 as an absolute count would
+    -- silently turn `max_width = 1.0` into a one-column window.
+    it('reads 1 as the whole window rather than a single column', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = 1 })
+      eq(config().width, room_in(src_win))
+    end)
+
+    it('reads a non-positive cap as no cap at all', function()
+      wide_paragraph()
+      open({ range = { 0, 1 }, max_width = 0 })
+      eq(config().width, room_in(src_win))
+    end)
   end)
 
   describe('sizing (§7.1)', function()
@@ -261,6 +275,31 @@ describe('float', function()
       open({ max_height = 7 })
       inst:set_text(table.concat(LONG, '\n'))
       eq(config().height, 7)
+    end)
+
+    --- Height of an overflowing translation under `max_height`.
+    local function height_under(max_height)
+      if inst ~= nil then
+        inst:close()
+      end
+      open({ max_height = max_height })
+      inst:set_text(table.concat(LONG, '\n'))
+      return config().height
+    end
+
+    -- `false`, `1` and `0` all mean "no cap", so they must agree with each
+    -- other and all leave more room than an actual cap does.
+    it('reads false, 1 and a non-positive cap alike as no cap', function()
+      local uncapped = height_under(false)
+      eq(height_under(1), uncapped)
+      eq(height_under(0), uncapped)
+      eq(uncapped > height_under(0.5), true)
+    end)
+
+    -- LuaJIT cannot tell 1.0 from 1, so reading 1 as an absolute count would
+    -- silently turn `max_height = 1.0` into a one-row window.
+    it('does not read 1 as a single row', function()
+      neq(height_under(1), 1)
     end)
 
     -- Resizing on every token makes the window jitter continuously.

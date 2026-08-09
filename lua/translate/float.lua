@@ -39,11 +39,22 @@ local function display_rows(lines, width)
   return rows
 end
 
-local function resolve_max_height(max_height)
-  if max_height > 0 and max_height < 1 then
-    return math.max(1, math.floor(vim.o.lines * max_height))
+--- Resolves a `max_height` / `max_width` option to a hard limit, or nil for "no
+--- limit". One rule for both, so a reader who has learnt one has learnt the
+--- other: `false` and any non-positive number mean no limit; a value up to and
+--- including 1 is a fraction of `full`; anything larger is an absolute count.
+---
+--- 1 is the whole thing, not one row or column. LuaJIT has no integer subtype —
+--- `1.0` and `1` are the same value — so a rule that read 1 as an absolute count
+--- would silently turn `max_width = 1.0` into a one-column window.
+local function resolve_cap(value, full)
+  if not value or value <= 0 then
+    return nil
   end
-  return math.max(1, math.floor(max_height))
+  if value <= 1 then
+    return math.max(1, math.floor(full * value))
+  end
+  return math.floor(value)
 end
 
 local Float = {}
@@ -73,17 +84,6 @@ local function room_for(win)
   return math.max(1, info.width - info.textoff - BORDER_COLS)
 end
 
---- Fractions are of the *source window*, not the editor: the float is bounded by
---- the window its paragraph lives in, and that is the frame the reader is
---- comparing it against. (`max_height` counts against the editor because a
---- float can be as tall as the screen allows regardless of its window.)
-local function resolve_max_width(max_width, room)
-  if max_width > 0 and max_width < 1 then
-    return math.max(1, math.floor(room * max_width))
-  end
-  return math.max(1, math.floor(max_width))
-end
-
 --- Width follows the paragraph, so the translation sits in a column the reader's
 --- eye is already scanning. "The paragraph" means the paragraph *as rendered*: a
 --- long line that soft-wraps is as wide as the window it wraps in, never as wide
@@ -98,12 +98,17 @@ local function paragraph_width(buf, win, range, max_width)
     width = math.max(width, vim.fn.strdisplaywidth(line))
   end
 
+  -- A fraction is of the *source window*, not the editor: the float is bounded
+  -- by the window its paragraph lives in, and that is the frame the reader
+  -- compares it against.
   local room = room_for(win)
   local fit = math.min(math.max(MIN_WIDTH, width), room)
-  if max_width then
+
+  local limit = resolve_cap(max_width, room)
+  if limit ~= nil then
     -- The cap outranks MIN_WIDTH, which only exists to stop a *short* paragraph
     -- from getting a sliver of a window — not to argue with a stated width.
-    fit = math.min(fit, resolve_max_width(max_width, room))
+    fit = math.min(fit, limit)
   end
   return math.max(1, fit)
 end
@@ -126,7 +131,10 @@ end
 
 function Float:_geometry()
   local wanted = math.max(1, display_rows(self.lines, self.width))
-  local capped = math.min(wanted, resolve_max_height(self.max_height))
+  -- A height fraction is of the editor, not the window: a float may be as tall
+  -- as the screen allows regardless of the window it hangs off.
+  local limit = resolve_cap(self.max_height, vim.o.lines)
+  local capped = limit ~= nil and math.min(wanted, limit) or wanted
   local space = available(self.src_win, self.range)
 
   -- Below by preference; flip above only when that is genuinely roomier. When
@@ -477,9 +485,9 @@ function M.open(opts)
     range = opts.range,
     provider = opts.provider,
     model = opts.model,
-    max_height = opts.max_height or 0.5,
-    -- `false` is meaningful — no cap, width follows the paragraph — so an
-    -- absent option cannot be spelled `or`.
+    -- `false` is meaningful on both — it turns the cap off — so an absent
+    -- option cannot be spelled `or`.
+    max_height = opts.max_height == nil and 0.5 or opts.max_height,
     max_width = opts.max_width == nil and 0.6 or opts.max_width,
     keymaps = opts.keymaps or {},
     on_close = opts.on_close,

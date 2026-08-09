@@ -27,9 +27,12 @@ local function defaults()
 
     -- Translation float
     float = {
+      -- Both caps read the same way: <= 1 is a fraction (1 being all of it),
+      -- > 1 an absolute count, `false` or non-positive no cap at all.
+      -- max_height is of the editor, max_width of the source window.
       max_height = 0.5,
       -- Prose that fills the window would otherwise make "width follows the
-      -- paragraph" mean "fills the window". `false` turns the cap off.
+      -- paragraph" mean "fills the window", hence a cap that is on by default.
       max_width = 0.6,
       keymaps = {
         scroll_down = '<C-d>',
